@@ -1,0 +1,751 @@
+% -*- Mode: noweb; noweb-code-mode: javascript-mode ; noweb-doc-mode: latex-mode -*-
+\documentclass{article}
+\usepackage{noweb}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\begin{document}
+
+% Generate code and documentation with:
+%
+% noweave -filter l2h -delay -x -html backbonestore.nw | htmltoc > backbonestore.html
+% notangle -Rstore.js backbonestore.nw > store.js
+% notangle -Rindex.html backbonestore.nw > index.html
+
+\section{Introduction}
+
+This is version 2.0 of \textbf{The Backbone Store}, a brief tutorial
+on using [[backbone.js]].
+
+\nwanchorto{http://documentcloud.github.com/backbone/}{Backbone.js} is
+a popular Model-View-Controller (MVC) library that provides a
+framework for creating data-rich, single-page web applications.  It
+provides (1) a two-layer scheme for separating data from presentation,
+(2) a means of automatically synchronizing data with a server in a
+RESTful manner, and (3) a mechanism for making some views bookmarkable
+and navigable.
+
+There are a number of other good tutorials for Backbone (See:
+\nwanchorto{http://www.plexical.com/blog/2010/11/18/backbone-js-tutorial/}{Meta
+  Cloud},
+\nwanchorto{http://andyet.net/blog/2010/oct/29/building-a-single-page-app-with-backbonejs-undersc/?utm_source=twitterfeed&utm_medium=twitter}{\&Yet's
+  Tutorial},
+\nwanchorto{http://bennolan.com/2010/11/24/backbone-jquery-demo.html}{Backbone
+  Mobile} (which is written in
+\nwanchorto{http://jashkenas.github.com/coffee-script/}{Coffee}), and
+\nwanchorto{http://joshbohde.com/2010/11/25/backbonejs-and-django/}{Backbone
+  and Django}.  However, a couple of months ago I was attempting to
+learn Sammy.js, a library very similar to Backbone, and they had a
+nifty tutorial called
+\nwanchorto{http://code.quirkey.com/sammy/tutorials/json_store_part1.html}{The
+  JsonStore}.
+
+In the spirit of The JSON Store, I present The Backbone Store.
+
+\subsection{Literate Program}
+
+A note: this article was written with the
+\nwanchorto{http://en.wikipedia.org/wiki/Literate_programming}{Literate
+  Programming} toolkit
+\nwanchorto{http://www.cs.tufts.edu/~nr/noweb/}{Noweb}. Where you see
+something that looks like \\<\\<this\\>\\>, it's a placeholder for code
+described elsewhere in the document.  Placeholders with an equal sign
+at the end of them indicate the place where that code is defined.  The
+link (U->) indicates that the code you're seeing is used later in the
+document, and (<-U) indicates it was used earlier but is being defined
+here.
+
+\subsection{Revision}
+
+This is version 2.0 of \textit{The Backbone Store}.  It includes
+changes to the store based upon a better understanding of what
+Backbone.js can do.  This version uses jQuery 1.6.2 and Backbone
+0.5.2.
+
+\subsection{The Store}
+
+To demonstrate the basics of Backbone, I'm going to create a simple
+one-page application, a store for record albums, with two unique
+views: a list of all products and a product detail view.  I will also
+put a shopping cart widget on the page that shows the user how many
+products he or she has dropped into the cart.  I'll use jQuery's
+[[fadeIn()]] and [[fadeOut()]] features to transition between the
+catalog and the product detail pages.
+
+\subsection{Models, Collections, and Controllers}
+
+Backbone's data layer provides two classes, [[Model]] and
+[[Collection]].  To use the Model, you inherit from it, modify the
+subclasss as needed, and then create new objects from the subclass by
+constructing the model with a JSON object.  You modify the object by
+calling [[get()]] or [[set()]] on named attributes, rather than on the
+Model object directly; this allows Model to notify other interested
+objects that the object has been changed.  And Model comes with
+[[fetch()]] and [[save()]] methods that will automatically pull or
+push a JSON representatino of the model to a server, if the Model has
+[[url]] as one of its attributes.
+
+Collections are just that: lists of objects of a specific model.  You
+extend the Collection class in a child class, and as you do you inform
+the Collection of what Model it represents, what URL you use to
+push/pull the full list of objects, and on what field the list should
+be sorted by default.  If you attempt to add a raw JSON object to a
+collection, it constructs a corresponding Model object out of the JSON
+and manipulates that.
+
+I will be getting the data from a simplified JSON file that comes in
+the download; it contains six record albums that the store sells.
+(Unlike the JSON store, these albums do not exist; the covers were
+generated during a round of
+\nwanchorto{http://elfs.livejournal.com/756709.html}{The Album Cover
+  Game}, a meme one popular with graphic designers.)
+
+For our purposes, then, we have a [[Product]] and a
+[[ProductCollection]].  A popular convention in Backbone is to use
+concrete names for models, and Name\textbf{Collection} for the
+collection.
+
+Models are duck-typed by default; they do not care what you put into
+them.  So all I need to say is that a [[Product]] is-a [[Model]].  The
+Collection is straightforward as well; I tell it what model it
+represents, override the [[initialize()]] method (which is empty in
+the Backbone default) to inform this Collection that it has a url, and
+create the comparator function for default sorting.
+
+<<product models>>=
+    var Product = Backbone.Model.extend({})
+
+    var ProductCollection = Backbone.Collection.extend({
+        model: Product,
+
+        initialize: function(models, options) {
+            this.url = options.url;
+        },
+
+        comparator: function(item) {
+            return item.get('title');
+        }
+    });
+@ 
+
+
+
+For the shopping cart, our cart will hold [[Item]]s, and the cart
+itself will be an [[ItemCollection]].  Shoppings carts are a little
+odd; the convention is that an [[Item]] is not a single instance of a
+product, but a reference to the products and a quantity.
+
+One thing we will be doing is changing the quantity, so I have
+provided a convenience function for the Item that allows you to do
+that.  Now, no client classes such as Views need to know how the
+quantity is updated.  
+
+Also, it would be nice to know the total price of the Item.
+
+<<cart models>>=
+    var Item = Backbone.Model.extend({
+        update: function(amount) {
+            this.set({'quantity': amount}, {silent: true});
+            this.collection.trigger('change', this);
+        },
+        price: function() {
+            console.log(this.get('product').get('title'), this.get('quantity'));
+            return this.get('product').get('price') * this.get('quantity');
+        }
+    });
+
+@ 
+
+The [[ItemCollection]] is a little trickier.  It is entirely
+client-side; it has no synchronization with the backend at all.  But
+it does have a model.
+
+The [[ItemCollection]] must be able to find an Item in the cart to
+update when a view needs it.  If the Item is not in the Collection, it
+must create one.  The method [[getOrCreateItemForProduct]] does this.
+It uses the [[detect()]] method, a method [[Collection]] inherits from
+Backbone's one dependency, Underscore.js; [[detect()]] returns the
+first [[Item]] in the [[ItemCollection]] for which the function
+returns [[true]].  Also, when I have to create a new Item, I want to
+add it to the collection, and I pass the parameter [[silent]], which
+prevents the Collection from notifying event subscribers that the
+collection has changed.  Since this is an Item with zero objects in
+it, this is not a change to what the collection represents, and I
+don't want Views to react without having to.
+
+Finally, I add two methods that return the total count of objects in
+the collection (not [[Items]], but actual [[Products]]), and the total
+cost of those items in the cart.  The Underscore method [[reduce()]]
+does this by taking a function for adding progressive items, and a
+starting value.
+
+<<cart models>>=
+    var ItemCollection = Backbone.Collection.extend({
+        model: Item,
+
+        getOrCreateItemForProduct: function(product) {
+            var i, 
+            pid = product.get('id'),
+            o = this.detect(function(obj) { 
+                return (obj.get('product').get('id') == pid); 
+            });
+            if (o) { 
+                return o;
+            }
+            i = new Item({'product': product, 'quantity': 0})
+            this.add(i, {silent: true})
+            return i;
+        },
+
+        getTotalCount: function() {
+            return this.reduce(function(memo, obj) { 
+                return obj.get('quantity') + memo; }, 0);
+        },
+
+        getTotalCost: function() {
+            return this.reduce(function(memo, obj) { 
+                return obj.price() + memo; }, 0);
+        }
+    });
+
+@ 
+
+\subsection {Views}
+
+Backbone Views are simple policy objects.  They have a root DOM
+element, the contents of which they manipulate and to which they
+listen for events, and a model or collection they represent within
+that element.  Views are not rigid; it's just Javascript and the DOM,
+and you can hook external events as needed.  
+
+More importantly, a View is sensitive to events \textit{within its
+  model or collection}, and can respond to changes automatically.
+This way, if you have a rich data ecosystem, when changes to one data
+item results in a cascade of changes throughout your datasets, the
+views will receive ``change'' events and can update themselves
+accordingly.
+
+I will show how this works with the shopping cart widget.
+
+To achieve the [[fadeIn/fadeOut]] animations and enforce consistency,
+I'm going to do some basic object-oriented programming.  I'm going to
+create a base class that contains knowledge about the main area into
+which all views are rendered, and that manages these transitions.
+
+With this technique, you can do lots of navigation-related tricks: you
+can highlight where the user is in breadcrumb-style navigation; you
+can change the class and highlight an entry on a nav bar; you can add
+and remove tabs from the top of the viewport as needed.
+
+<<base view>>=
+    var _BaseView = Backbone.View.extend({
+        parent: $('#main'),
+        className: 'viewport',
+
+@ 
+
+The above says that I am creating a class called \texttt{BaseView} and
+defining two fields.  The first, 'parent', will be used by all child
+views to identify into which DOM object the View's root element will
+be rendered.  The second defines a common class we will use for the
+purpose of identifying these views to jQuery.  Backbone automatically
+creates a new [[DIV]] object with the class 'viewport' when a view
+constructor is called.  It will be our job to attach that [[DIV]] to
+the DOM.  In the HTML, you will see the [[DIV\#main]] object where most
+of the work will be rendered.
+
+<<base view>>=
+        initialize: function() {
+            this.el = $(this.el);
+            this.el.hide();
+            this.parent.append(this.el);
+            return this;
+        },
+
+@ 
+%$
+
+The method above ensures that the element is rendered, but not
+visible, and contained within the [[DIV\#main]].  Note also that
+the element is not a sacrosanct object; the Backbone.View is more a
+collection of standards than a mechanism of enforcement, and so
+defining it from a raw DOM object to a jQuery object will not break
+anything.
+
+Next, we will define the hide and show functions:
+
+<<base view>>=
+        hide: function() {
+            if (this.el.is(":visible") === false) {
+                return null;
+            }
+            promise = $.Deferred(_.bind(function(dfd) { 
+                this.el.fadeOut('fast', dfd.resolve)}, this));
+            return promise.promise();
+        },
+
+        show: function() {
+            if (this.el.is(':visible')) {
+                return;
+            }       
+            promise = $.Deferred(_.bind(function(dfd) { 
+                this.el.fadeIn('fast', dfd.resolve) }, this))
+            return promise.promise();
+        }
+    });
+
+@         
+
+\textbf{Deferred} is a new feature of jQuery.  It is a different
+mechanism for invoking callbacks by attaching attributes and behavior
+to the callback function.  By using this, we can say thing like
+``\textit{When} everything is hidden (when every deferred returned
+from \textbf{hide} has been resolved), \textit{then} show the
+appropriate viewport.''  Deferreds are incredibly powerful, and this
+is a small taste of what can be done with them.
+
+Before we move on, let's take a look at the HTML we're going to use
+for our one-page application:
+
+<<index.html>>=
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <title>
+            The Backbone Store
+        </title>
+        <link rel="stylesheet" href="jsonstore.css" type="text/css">
+        <<product list template>>
+        <<product detail template>>
+        <<cart template>>
+    </head>
+    <body>
+        <div id="container">
+            <div id="header">
+                <h1>
+                    The Backbone Store
+                </h1>
+
+                <div class="cart-info">
+                </div>
+            </div>
+
+            <div id="main"> </div>
+        </div>
+        <script src="jquery-1.6.2.min.js" type="text/javascript"></script>
+        <script src="underscore.js" type="text/javascript"></script>
+        <script src="backbone.js" type="text/javascript"></script>
+        <script src="store.js" type="text/javascript"></script>
+    </body>
+</html>
+@ 
+
+It's not much to look at, but already you can see where that
+[[DIV\#main]] goes, as well as where we are putting our templates.
+The [[DIV\#main]] will host a number of viewports, only one of
+which will be visible at any given time.
+
+Our first view is going to be the product list view, named, well,
+guess.  Or just look down a few lines.
+
+This gives us a chance to discuss one of the big confusions new
+Backbone users frequently have: \textit{What is \texttt{render()}
+  for?}.  Render is not there to show or hide the view.
+\texttt{Render()} is there to \textit{change the view when the
+  underlying data changes}.  It renders the data into a view.  In our
+functionality, we use the parent class's \texttt{show()} and
+\texttt{hide()} methods to actually show the view.
+
+That call to [[\_super\_]] is a Backbone idiom for calling a method on
+the parent object.  It is, as far as anyone knows, the only way to
+invoke a superclass method if it has been redefined in a subclass.
+It is rather ugly, but useful.
+
+<<product list view>>=
+    var ProductListView = _BaseView.extend({
+        id: 'productlistview',
+        template: $("#store_index_template").html(),
+
+        initialize: function(options) {
+            this.constructor.__super__.initialize.apply(this, [options])
+            this.collection.bind('reset', _.bind(this.render, this));
+        },
+
+        render: function() {
+            this.el.html(_.template(this.template, 
+                                    {'products': this.collection.toJSON()}))
+            return this;
+        }
+    });
+
+@ 
+%$
+
+That \texttt{\_.template()} method is provided by undescore.js, and is
+a full-featured, javascript-based templating method.  It's not the
+fastest or the most feature-complete, but it is more than adequate for
+our purposes and it means we don't have to import another library.  It
+vaguely resembles ERB from Rails, so if you are familiar with that,
+you should understand this fairly easily.
+
+And here is the HTML:
+
+<<product list template>>=
+<script id="store_index_template" type="text/x-underscore-tmplate">
+  <h1>Product Catalog</h1>
+  <ul>
+    <% for(i=0,l=products.length;i<l;++i) { p = products[i]; %>
+    <li class="item">
+      <div class="item-image">
+        <a href="#item/<%= p.id %>">
+          <img alt="<%= p.title %>" src="<%= p.image %>" />
+        </a>
+      </div>
+      <div class="item-artist"><%= p.artist %></div>
+      <div class="item-title"><%= p.title %></div>
+      <div class="item-price">$<%= p.price %></div>
+    </li>
+    <% } %>
+  </ul>
+</script>
+@ 
+%$
+
+
+One of the most complicated objects in our ecosystem is the product
+view.  It actually does something!  The prefix ought to be familiar,
+but note that we are again using [[\#main]] as our target; we will be
+showing and hiding the various [[DIV]] objects in [[\#main]] again and
+again.
+
+The only trickiness here is twofold: the (rather hideous) means by
+which one calls the method of a parnt class from a child class via
+Backbone's class heirarchy (this is most definitely \textbf{not}
+Javascript standard), and keeping track of the itemcollection object,
+so we can add and change items as needed.
+
+<<product detail view>>=
+    var ProductView = _BaseView.extend({
+        id: 'productitemview',
+        template: $("#store_item_template").html(),
+        initialize: function(options) {
+            this.constructor.__super__.initialize.apply(this, [options])
+            this.itemcollection = options.itemcollection;
+            this.item = this.itemcollection.getOrCreateItemForProduct(this.model);
+            return this;
+        },
+
+@ 
+%$
+
+There are certain events in which we're interested: keypresses and
+clicks on the update button and the quantity form.  (Okay, ``UQ''
+isn't the best for ``update quantity''.  I admit that.)  Note the
+peculiar syntax of ``EVENT SELECTOR'': ``methodByName'' for each
+event.
+
+Backbone tells us that the only events it can track by itself are
+those that jQuery's ``delegate'' understands.  As of 1.5, that seems
+to be just about all of them.
+
+<<product detail view>>=
+        events: {
+            "keypress .uqf" : "updateOnEnter",
+            "click .uq"     : "update",
+        },
+
+@ 
+
+And now we will deal with the update. This code ought to be fairly
+readable: the only specialness is that it's receiving an event, and
+we're ``silencing'' the call to [[cart.add()]], which means that the
+cart collection will not publish any events.  There are only events
+when the item has more than zero, and that gets called on
+[[cart_item.update()]].
+
+In the original tutorial, this code had a lot of responsibility for
+managing the shopping cart, looking into it and seeing if it had an
+item for this product, and there was lots of accessing the model to
+get its id and so forth.  All of that has been put into the shopping
+cart model, which is where it belongs: \textit{knowledge about items
+  and each item's relationship to its collection belongs in the
+  collection}.
+
+Look closely at the [[update()]] method.  The reference [[this.\$]] is
+a special Backbone object that limits selectors to objects inside the
+element of the view.  Without it, jQuery would have found the first
+input field of class 'uqf' in the DOM, not the one for this specific
+view.  [[this.\$('.uqf')]] is shorthand for [[$('uqf', this.el)]], and
+helps clarify what it is you're looking for.
+
+%'
+
+<<product detail view>>=
+        update: function(e) {
+            e.preventDefault();
+            this.item.update(parseInt(this.$('.uqf').val()));
+        },
+        
+        updateOnEnter: function(e) {
+            if (e.keyCode == 13) {
+                return this.update(e);
+            }
+        },
+
+@ 
+%$
+
+The render is straightforward:
+
+<<product detail view>>=
+        render: function() {
+            this.el.html(_.template(this.template, this.model.toJSON()));
+            return this;
+        }
+    });
+
+@ 
+
+The product detail template is fairly straightforward.  There is no
+[[underscore]] magic because there are no loops.
+
+<<product detail template>>=
+<script id="store_item_template" type="text/x-underscore-template">
+  <div class="item-detail">
+    <div class="item-image">
+      <img alt="<%= title %>" src="<%= large_image %>" />
+    </div>
+  </div>
+  <div class="item-info">
+    <div class="item-artist"><%= artist %></div>
+    <div class="item-title"><%= title %></div>
+    <div class="item-price">$<%= price %></div>
+    <form action="#/cart" method="post">
+      <p>
+        <label>Quantity:</label>
+        <input class="uqf" name="quantity" size="2" type="text" value="1" />
+      </p>
+      <p>
+        <input class="uq" type="submit" value="Add to Cart" />
+      </p>
+    </form>
+    <div class="item-link">
+      <a href="<%= url %>">Buy this item on Amazon</a>
+    </div>
+    <div class="back-link">
+      <a href="#">&laquo; Back to Items</a>
+    </div>
+  </div>
+</script>
+@ 
+
+So, let's talk about that shopping cart thing.  We've been making the
+point that when it changes, when you call [[item.update]] within the
+product detail view, any corresponding subscribing views sholud
+automatically update. 
+
+<<cart widget>>=
+    var CartWidget = Backbone.View.extend({
+        el: $('.cart-info'),
+        template: $('#store_cart_template').html(),
+        
+        initialize: function() {
+            this.collection.bind('change', _.bind(this.render, this));
+        },
+        
+@ 
+%$
+
+And there is the major magic.  CartWidget will be initialized with the
+ItemCollection; when there is any change in the collection, the widget
+will receive the 'change' event, which will automatically trigger the
+call to the widget's [[render()]] method.
+
+The render method will refill that widget's HTML with a re-rendered
+template with the new count and cost, and then wiggle it a little to
+show that it did changed:
+
+<<cart widget>>=
+        render: function() {
+            this.el.html(
+                _.template(this.template, {
+                    'count': this.collection.getTotalCount(),
+                    'cost': this.collection.getTotalCost()
+                })).animate({paddingTop: '30px'})
+                .animate({paddingTop: '10px'});
+        }
+    });
+
+@ 
+
+And the HTML for the template is dead simple:
+
+<<cart template>>=
+<script id="store_cart_template" type="text/x-underscore-template">
+  <p>Items: <%= count %> ($<%= cost %>)</p>
+</script>
+
+@ 
+%$
+
+Lastly, there is the [[Router]].  In Backbone, the Router is a
+specialized View for invoking other views.  It listens for one
+specific event: when the [[window.location.hash]] object, the part of
+the URL after the hash symbol, changes.  When the hash changes, the
+Router invokes an event handler.  The Router, since its purpose is to
+control the major components of the one-page display, is also a good
+place to keep all the major components of the sytem.  We'll keep track
+of the [[Views]], the [[ProductCollection]], and the
+[[ItemCollection]].
+
+<<router>>=
+    var BackboneStore = Backbone.Router.extend({
+        views: {},
+        products: null,
+        cart: null,
+
+@ 
+
+There are two events we care about: view the list, and view a detail.
+They are routed like this:
+
+<<router>>=
+        routes: {
+            "": "index",
+            "item/:id": "product",
+        },
+
+@ 
+
+Like most Backbone objects, the Router has an initialization feature.
+I create a new, empty shopping cart and corresponding cart widget,
+which doesn't render because it's empty.  I then create a new
+[[ProductCollection]] and and corresponding [[ProductListView]].
+These are all processes that happen immediately.
+
+What does not happen immediately is the [[fetch()]] of data from the
+back-end server.  For that, I use the jQuery deferred again, because
+[[fetch()]] ultimately returns the results of [[sync()]], which
+returns the result of an [[ajax()]] call, which is a deferred.
+
+<<router>>=
+        initialize: function(data) {
+            this.cart = new ItemCollection();
+            new CartWidget({collection: this.cart});
+
+            this.products = new ProductCollection([], {
+                url: 'data/items.json'});
+            this.views = {
+                '_index': new ProductListView({
+                    collection: this.products
+                })
+            };
+            $.when(this.products.fetch({reset: true}))
+                .then(function() { window.location.hash = ''; });
+            return this;
+        },
+
+@ 
+%$
+
+There are two things to route \textit{to}, but we must also route
+\textit{from}.  Remember that our two major views, the product list
+and the product detail, inherited from [[\_BaseView]], which has the
+[[hide()]] and [[show()]] methods.  We want to hide all the views,
+then show the one invoked.  First, let's hide every view we know
+about.  [[hide()]] returns either a deferred (if the object is being
+hidden) or null.  The [[_.select()]] call at the end means that this
+method returns only an array of deferreds.
+
+<<router>>=
+        hideAllViews: function () {
+            return _.select(
+                _.map(this.views, function(v) { return v.hide(); }), 
+                function (t) { return t != null });
+        },
+
+@ 
+
+Showing the product list view is basically hiding everything, then
+showing the index:
+
+<<router>>=
+        index: function() {
+            var view = this.views['_index'];
+            $.when(this.hideAllViews()).then(
+                function() { return view.show(); });
+        },
+
+@ 
+%$
+
+On the other hand, showing the product detail page is a bit trickier.
+In order to avoid re-rendering all the time, I am going to create a
+view for every product in which the user shows interest, and keep it
+around, showing it a second time if the user wants to see it a second
+time.  
+
+Not that we pass it the [[ItemCollection]] instance.  It uses this to
+create a new item, which (if you recall from our discussion of
+[[getOrCreateItemForProduct()]]) is automagically put into the
+collection as needed.  Which means all we need to do is update this
+item and the item collection \textit{changes}, which in turn causes
+the [[CartWidget]] to update automagically as well.
+
+<<router>>=
+        product: function(id) {
+            var product, v, view;
+            product = this.products.detect(function(p) { return p.get('id') == (id); })
+            view = ((v = this.views)['item.' + id]) || (v['item.' + id] = (
+                new ProductView({model: product, 
+                                 itemcollection: this.cart}).render()));
+            $.when(this.hideAllViews()).then(
+                function() { view.show(); });
+        }
+    });
+@ 
+%$
+
+Finally, we need to start the program
+
+<<initialization>>=
+    $(document).ready(function() {
+        new BackboneStore();
+        Backbone.history.start();
+    });
+@ 
+%$
+
+\section{The Program}
+
+Here's the entirety of the program:
+
+<<store.js>>=
+(function() {
+
+<<product models>>
+
+<<cart models>>
+
+<<base view>>
+
+<<product list view>>
+
+<<product detail view>>
+
+<<cart widget>>
+
+<<router>>
+
+<<initialization>>
+
+}).call(this);
+@ 
+
+And that's it.  Put it all together, and you've got yourself a working
+Backbone Store.
+
+This code is available at my github at
+\nwanchorto{https://github.com/elfsternberg/The-Backbone-Store}{The
+  Backbone Store}.
+
+\end{document}
